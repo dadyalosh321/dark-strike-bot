@@ -8,7 +8,6 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
-# تحميل الإعدادات
 with open("config.json", "r", encoding="utf-8") as f:
     config = json.load(f)
 
@@ -35,11 +34,11 @@ CHOOSING, LOGIN, REPORT_USERNAME, REPORT_TYPE, INFO_STEP, AUTH = range(6)
 report_reasons = {
     "spam": "1", "self": "5", "drugs": "7", "nudity": "8",
     "violence": "9", "hate": "4", "harassment": "2",
-    "scam": "10"
+    "scam": "10", "impersonation": "6"
 }
 
 def build_report_message(done, error, username, mode):
-    return f"Done: {done} / Error: {error}\nTarget: @{username}\nMode: {mode.capitalize()}"
+    return f"<code>Done: {done} / Error: {error}\nTarget: @{username}\nMode: {mode.capitalize()}</code>"
 
 def login_and_get_cookies(username, password):
     session = requests.Session()
@@ -61,19 +60,12 @@ def login_and_get_cookies(username, password):
         return c.get("sessionid"), c.get("csrftoken")
     return None, None
 
-def get_user_id(username, sessionid=None):
+def get_user_id(username):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "X-IG-App-ID": "936619743392459"
-        }
-        if sessionid:
-            headers["Cookie"] = f"sessionid={sessionid}"
-
         url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+        headers = {"User-Agent": "Mozilla/5.0", "X-IG-App-ID": "936619743392459"}
         res = requests.get(url, headers=headers)
-        data = res.json()
-        return data.get("data", {}).get("user", {}).get("id")
+        return res.json()["data"]["user"]["id"]
     except:
         return None
 
@@ -82,12 +74,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in AUTHORIZED_USERS:
         await update.message.reply_text("🔒 أرسل كلمة المرور لاستخدام البوت:")
         return AUTH
-    keyboard = [
-        ["🔐 تسجيل دخول", "🧾 بلاغ"],
-        ["📋 الأوامر", "🚫 تسجيل خروج"]
-    ]
-    await update.message.reply_text("✅ مرحباً بك في DARK STRIKE!",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
+    keyboard = [["🔐 تسجيل دخول", "🧾 بلاغ"], ["📋 الأوامر", "🚫 تسجيل خروج"]]
+    await update.message.reply_text("✅ مرحباً بك في DARK STRIKE!", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
     return CHOOSING
 
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,7 +127,7 @@ async def get_report_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚨 اختر نوع البلاغ:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True))
     return REPORT_TYPE
 
-async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_repeated_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = context.user_data.get("target_username")
     reason = update.message.text.lower()
@@ -151,53 +139,44 @@ async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = user_data_store[user_id]
     sessionid = session.split("sessionid=")[-1].split(";")[0]
     csrftoken = session.split("csrftoken=")[-1].split(";")[0]
-    target_id = get_user_id(username, sessionid)
+    target_id = get_user_id(username)
 
     if not target_id:
         await update.message.reply_text("❌ الحساب غير موجود.")
         return await start(update, context)
 
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Host": "i.instagram.com",
-        "Cookie": f"sessionid={sessionid}; csrftoken={csrftoken}",
-        "X-CSRFToken": csrftoken,
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-    }
-    data = f"source_name=profile&reason_id={report_reasons.get(reason, '1')}&frx_context="
-
-    report_counters[user_id] = 0
-    report_errors[user_id] = 0
-
-    await update.message.reply_text("🚀 بدأ التبليغ... أرسل /stop لإيقاف التكرار.")
+    msg = await update.message.reply_text("🚨 بدء البلاغ التلقائي. أرسل /stop للإيقاف.")
     active_reports[user_id] = True
-
+    done = 0
+    error = 0
     while active_reports.get(user_id):
-        res = requests.post(f"https://i.instagram.com/users/{target_id}/flag/", headers=headers, data=data)
-
-        if res.status_code == 429:
-            await update.message.reply_text("🚫 تم حظر الحساب مؤقتًا من البلاغات.")
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Host": "i.instagram.com",
+                "Cookie": f"sessionid={sessionid}; csrftoken={csrftoken}",
+                "X-CSRFToken": csrftoken,
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            }
+            data = f"source_name=profile&reason_id={report_reasons.get(reason, '1')}&frx_context="
+            res = requests.post(f"https://i.instagram.com/users/{target_id}/flag/", headers=headers, data=data)
+            if res.status_code == 200:
+                done += 1
+            elif res.status_code == 404:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🚨 الحساب @{username} banned.")
+                break
+            else:
+                error += 1
+            await msg.edit_text(build_report_message(done, error, username, reason), parse_mode="HTML")
+            await asyncio.sleep(15)
+        except:
             break
-        elif res.status_code == 200:
-            report_counters[user_id] += 1
-        else:
-            report_errors[user_id] += 1
-
-        await update.message.reply_text(
-            f"```{build_report_message(report_counters[user_id], report_errors[user_id], username, reason)}```",
-            parse_mode="Markdown"
-        )
-        await asyncio.sleep(15)
-
     return await start(update, context)
 
-async def stop_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_loop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if active_reports.get(uid):
-        active_reports[uid] = False
-        await update.message.reply_text("🛑 تم إيقاف التبليغ التلقائي.")
-    else:
-        await update.message.reply_text("ℹ️ لا يوجد بلاغ تلقائي يعمل حالياً.")
+    active_reports[uid] = False
+    await update.message.reply_text("🛑 تم إيقاف التبليغ التلقائي.")
     return await start(update, context)
 
 def main():
@@ -218,13 +197,13 @@ def main():
             ],
             LOGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_login)],
             REPORT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_report_type)],
-            REPORT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_report)]
+            REPORT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_repeated_report)]
         },
-        fallbacks=[CommandHandler("start", start), CommandHandler("stop", stop_report)]
+        fallbacks=[CommandHandler("stop", stop_loop), CommandHandler("start", start)]
     )
 
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("stop", stop_report))
+    app.add_handler(CommandHandler("stop", stop_loop))
     app.run_polling()
 
 if __name__ == "__main__":
