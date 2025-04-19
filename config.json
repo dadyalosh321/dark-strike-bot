@@ -1,0 +1,15 @@
+{
+    "password": "alosh",
+    "report_interval": 15,
+    "language": "ar",
+    "auto_stop_minutes": 10,
+    "block_verified_accounts": false,
+    "block_kids_accounts": true,
+    "smart_suggestion": true,
+    "auto_detect_links_in_bio": true,
+    "enable_avatar_analysis": true,
+    "enable_last_post_check": true,
+    "warn_on_spam_repeats": true,
+    "filter_political_or_terror_content": true
+  }
+  
