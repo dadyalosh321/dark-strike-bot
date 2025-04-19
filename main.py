@@ -8,6 +8,8 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, filters
 )
 
+CHOOSING, LOGIN, REPORT_USERNAME, REPORT_TYPE, AUTH = range(5)
+
 with open("config.json", "r", encoding="utf-8") as f:
     config = json.load(f)
 
@@ -28,8 +30,6 @@ AUTHORIZED_USERS = set()
 report_counters = {}
 report_errors = {}
 active_reports = {}
-
-CHOOSING, LOGIN, REPORT_USERNAME, REPORT_TYPE, INFO_STEP, AUTH = range(6)
 
 report_reasons = {
     "spam": "1", "self": "5", "drugs": "7", "nudity": "8",
@@ -127,7 +127,7 @@ async def get_report_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚨 اختر نوع البلاغ:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True))
     return REPORT_TYPE
 
-async def send_repeated_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = context.user_data.get("target_username")
     reason = update.message.text.lower()
@@ -145,10 +145,15 @@ async def send_repeated_report(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ الحساب غير موجود.")
         return await start(update, context)
 
-    msg = await update.message.reply_text("🚨 بدء البلاغ التلقائي. أرسل /stop للإيقاف.")
+    msg = await update.message.reply_animation(
+        animation="https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHpoMXdiNnpjYW1vNHdpZzk4dmVudWZkdTBkcmJmaXR4bW1zaWJ3YyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/I6wUi5eTdUCWI/giphy.gif",
+        caption="🚨 بدء البلاغ التلقائي. أرسل /stop للإيقاف."
+    )
+
     active_reports[user_id] = True
     done = 0
     error = 0
+
     while active_reports.get(user_id):
         try:
             headers = {
@@ -160,17 +165,18 @@ async def send_repeated_report(update: Update, context: ContextTypes.DEFAULT_TYP
             }
             data = f"source_name=profile&reason_id={report_reasons.get(reason, '1')}&frx_context="
             res = requests.post(f"https://i.instagram.com/users/{target_id}/flag/", headers=headers, data=data)
+
             if res.status_code == 200:
                 done += 1
-            elif res.status_code == 404:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🚨 الحساب @{username} banned.")
-                break
             else:
                 error += 1
-            await msg.edit_text(build_report_message(done, error, username, reason), parse_mode="HTML")
+
+            await msg.edit_caption(build_report_message(done, error, username, reason), parse_mode="HTML")
             await asyncio.sleep(15)
+
         except:
             break
+
     return await start(update, context)
 
 async def stop_loop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,13 +203,12 @@ def main():
             ],
             LOGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_login)],
             REPORT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_report_type)],
-            REPORT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_repeated_report)]
+            REPORT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_report)]
         },
         fallbacks=[CommandHandler("stop", stop_loop), CommandHandler("start", start)]
     )
 
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("stop", stop_loop))
     app.run_polling()
 
 if __name__ == "__main__":
